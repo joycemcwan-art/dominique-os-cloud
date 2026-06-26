@@ -109,7 +109,8 @@
     const { error } = await client.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: window.location.origin + window.location.pathname
+        emailRedirectTo: window.location.origin + window.location.pathname,
+        shouldCreateUser: false
       }
     });
     if (error) {

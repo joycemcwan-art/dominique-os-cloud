@@ -92,8 +92,9 @@ const relationSegments = [
 ];
 
 let state = loadState();
-let activeView = "map";
-let selectedDateKey = isDateKey(state.meta?.selectedDate) ? state.meta.selectedDate : todayKey();
+const initialRoute = readInitialRoute();
+let activeView = initialRoute.view;
+let selectedDateKey = initialRoute.date;
 let selectedNodeId = route[0].id;
 let syncState = {
   serverOnline: false,
@@ -184,6 +185,17 @@ function todayKey() {
   const m = String(now.getMonth() + 1).padStart(2, "0");
   const d = String(now.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+function readInitialRoute() {
+  const params = new URLSearchParams(window.location.search);
+  const date = params.get("date");
+  const view = params.get("view");
+  const views = new Set(["map", "calendar", "domains", "world"]);
+  return {
+    date: isDateKey(date) ? date : (isDateKey(state.meta?.selectedDate) ? state.meta.selectedDate : todayKey()),
+    view: views.has(view) ? view : "map"
+  };
 }
 
 function formatDate(date) {
@@ -328,6 +340,7 @@ async function init() {
   renderDomains();
   renderWorld();
   bindEvents();
+  switchView(activeView);
   refreshIcons();
   await restoreStateFromServer();
   await loadRemoteData(false);

@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dominique OS</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand">
+          <div class="brand-mark">D</div>
+          <div>
+            <p class="brand-name">Dominique OS</p>
+            <p class="brand-subtitle">Evolution Console</p>
+          </div>
+        </div>
+        <nav class="nav-list">
+          <button class="nav-item active" data-view="map">
+            <i data-lucide="map"></i>
+            <span>探索地图</span>
+          </button>
+          <button class="nav-item" data-view="calendar">
+            <i data-lucide="calendar-days"></i>
+            <span>日历</span>
+          </button>
+          <button class="nav-item" data-view="domains">
+            <i data-lucide="orbit"></i>
+            <span>七域</span>
+          </button>
+          <button class="nav-item" data-view="world">
+            <i data-lucide="globe-2"></i>
+            <span>世界</span>
+          </button>
+        </nav>
+        <div class="sidebar-footer">
+          <span class="tiny-label">查看日期</span>
+          <strong id="sidebarDate">2026-06-25</strong>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Personal operating system</p>
+            <h1 id="viewTitle">探索地图</h1>
+          </div>
+          <div class="topbar-actions">
+            <div class="sync-indicator" id="syncIndicator">
+              <span></span>
+              <strong>本地模式</strong>
+            </div>
+            <div class="date-pill">
+              <i data-lucide="sun"></i>
+              <span id="todayLabel">今天</span>
+            </div>
+            <div class="date-nav" aria-label="日期导航">
+              <button class="ghost-button date-step" id="prevDateBtn" type="button" aria-label="前一天">
+                <i data-lucide="chevron-left"></i>
+              </button>
+              <input type="date" id="activeDateInput" aria-label="查看日期" />
+              <button class="ghost-button date-step" id="nextDateBtn" type="button" aria-label="后一天">
+                <i data-lucide="chevron-right"></i>
+              </button>
+              <button class="ghost-button" id="todayDateBtn" type="button">
+                <i data-lucide="calendar-check"></i>
+                <span>今天</span>
+              </button>
+            </div>
+            <button class="ghost-button" id="syncFeishuBtn" type="button">
+              <i data-lucide="refresh-cw"></i>
+              <span>同步</span>
+            </button>
+            <button class="primary-button" id="writeFeishuBtn" type="button">
+              <i data-lucide="upload-cloud"></i>
+              <span>写入飞书</span>
+            </button>
+            <button class="ghost-button" id="resetTodayBtn" type="button">
+              <i data-lucide="rotate-ccw"></i>
+              <span>重置当日</span>
+            </button>
+          </div>
+        </header>
+
+        <section class="view active" id="mapView" data-title="探索地图">
+          <div class="map-layout">
+            <section class="map-stage panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Daily route</p>
+                  <h2>如观 到 如观</h2>
+                </div>
+                <div class="progress-ring" aria-label="当日完成度">
+                  <span id="todayProgress">0/9</span>
+                </div>
+              </div>
+
+              <div class="route-canvas" id="routeCanvas">
+                <svg class="route-svg" viewBox="0 0 1000 560" aria-hidden="true">
+                  <path id="routeShadow" d="" />
+                  <path id="routePath" d="" />
+                </svg>
+                <div class="route-nodes" id="routeNodes"></div>
+              </div>
+
+              <div class="quote-card">
+                <div>
+                  <p class="eyebrow">这一天的话</p>
+                  <blockquote id="dailyQuote">知人者智，自知者明。</blockquote>
+                </div>
+                <cite id="dailyQuoteSource">《道德经》第三十三章</cite>
+              </div>
+            </section>
+
+            <aside class="node-editor panel">
+              <div class="node-editor-top">
+                <span class="domain-dot" id="selectedDot"></span>
+                <div>
+                  <p class="eyebrow" id="selectedStep">第 1 站</p>
+                  <h2 id="selectedTitle">如观</h2>
+                </div>
+              </div>
+
+              <p class="domain-copy" id="selectedDefinition"></p>
+              <p class="domain-goal" id="selectedGoal"></p>
+
+              <label class="check-row">
+                <input type="checkbox" id="nodeDone" />
+                <span>当日已完成</span>
+              </label>
+
+              <label class="field-label" for="nodeStatus">状态</label>
+              <textarea id="nodeStatus" rows="8" placeholder="写下这一天真实的状态"></textarea>
+
+              <div class="editor-actions">
+                <button class="primary-button" id="saveNodeBtn" type="button">
+                  <i data-lucide="save"></i>
+                  <span>保存</span>
+                </button>
+                <button class="ghost-button" id="clearNodeBtn" type="button">
+                  <i data-lucide="eraser"></i>
+                  <span>清空</span>
+                </button>
+              </div>
+
+              <div class="feedback-strip" id="mapFeedback">
+                这一天先落在一个真实动作里。
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="calendarView" data-title="日历">
+          <div class="calendar-grid">
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Week</p>
+                  <h2>周日历</h2>
+                </div>
+                <span class="sync-badge">来自探索地图</span>
+              </div>
+              <div class="week-calendar" id="weekCalendar"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Month</p>
+                  <h2>月日历</h2>
+                </div>
+                <span class="sync-badge pending" id="monthSyncBadge">飞书时间 tab</span>
+              </div>
+              <div class="feishu-status">
+                <span></span>
+                <strong id="feishuStatusTitle">等待本地服务</strong>
+                <p id="feishuStatusMeta">个人数据库 / 时间</p>
+              </div>
+              <div class="month-calendar" id="monthCalendar"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="domainsView" data-title="七域">
+          <div class="domains-header panel">
+            <div>
+              <p class="eyebrow">Seven domains</p>
+              <h2>七个区域，一条循环路线</h2>
+            </div>
+            <div class="human-feedback" id="humanFeedback">
+              当日反馈会跟随你的完成情况变化。
+            </div>
+          </div>
+          <div class="domain-grid" id="domainGrid"></div>
+        </section>
+
+        <section class="view" id="worldView" data-title="世界">
+          <div class="world-layout">
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Daily briefings</p>
+                  <h2>定时任务</h2>
+                </div>
+                <span class="sync-badge" id="routineSyncBadge">日更新</span>
+              </div>
+              <div class="routine-grid" id="routineGrid"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Projects</p>
+                  <h2>项目推进</h2>
+                </div>
+                <button class="ghost-button compact" id="addProjectBtn" type="button">
+                  <i data-lucide="plus"></i>
+                  <span>加入</span>
+                </button>
+              </div>
+              <textarea id="projectInput" rows="5" placeholder="这一天我在推进什么"></textarea>
+              <div class="project-list" id="projectList"></div>
+            </section>
+
+            <section class="panel relation-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Relationships</p>
+                  <h2>本周建议维护</h2>
+                </div>
+                <span class="sync-badge pending" id="relationSyncBadge">项目 / 投资人 / Stars</span>
+              </div>
+              <div class="relation-columns" id="relationColumns"></div>
+            </section>
+
+            <section class="panel report-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Sunday report</p>
+                  <h2>周日晚日报</h2>
+                </div>
+                <button class="primary-button compact" id="generateReportBtn" type="button">
+                  <i data-lucide="file-text"></i>
+                  <span>生成草稿</span>
+                </button>
+              </div>
+              <textarea id="weeklyReport" rows="12" placeholder="周报草稿"></textarea>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script src="./cloud-config.js"></script>
+    <script src="./cloud-sync.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

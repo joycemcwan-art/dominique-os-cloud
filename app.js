@@ -1,5 +1,5 @@
 const STORAGE_KEY = "dominique-os-state-v1";
-const STATE_SCHEMA_VERSION = 2;
+const STATE_SCHEMA_VERSION = 3;
 const API_BASE = location.protocol === "file:" ? "http://127.0.0.1:8799" : "";
 const LEGACY_RECOVERY_STATUS = "已完成（根据本轮反馈恢复）";
 
@@ -112,7 +112,8 @@ function loadState() {
       updatedAt: new Date().toISOString()
     },
     days: {},
-    relationPlan: createEmptyRelationPlan()
+    relationPlan: createEmptyRelationPlan(),
+    feishuCalendar: createEmptyFeishuCalendar()
   };
 
   try {
@@ -146,7 +147,8 @@ function normalizeState(input) {
     relationPlan: {
       ...createEmptyRelationPlan(),
       ...((input || {}).relationPlan || {})
-    }
+    },
+    feishuCalendar: normalizeFeishuCalendar((input || {}).feishuCalendar)
   };
   relationSegments.forEach((segment) => {
     const rows = Array.isArray(normalized.relationPlan[segment.id]) ? normalized.relationPlan[segment.id] : [];
@@ -244,6 +246,78 @@ function createEmptyRelationPlan() {
   }, {});
 }
 
+function createEmptyFeishuCalendar() {
+  return {
+    months: {},
+    updatedAt: ""
+  };
+}
+
+function normalizeFeishuCalendar(input) {
+  const calendar = createEmptyFeishuCalendar();
+  const months = input?.months && typeof input.months === "object" ? input.months : {};
+  Object.entries(months).forEach(([month, value]) => {
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
+    const records = Array.isArray(value?.records) ? value.records.map(normalizeTimeRecord).filter(Boolean) : [];
+    calendar.months[month] = {
+      source: value?.source || "feishu",
+      start: value?.start || `${month}-01`,
+      end: value?.end || "",
+      syncedAt: value?.syncedAt || input?.updatedAt || "",
+      records: dedupeTimeRecords(records)
+    };
+  });
+  calendar.updatedAt = input?.updatedAt || latestCalendarSync(calendar) || "";
+  return calendar;
+}
+
+function normalizeTimeRecord(record) {
+  if (!record || typeof record !== "object" || !isDateKey(record.date)) return null;
+  return {
+    id: String(record.id || `${record.date}:${record.startTime || ""}:${record.title || record.eventType || ""}`),
+    title: String(record.title || ""),
+    eventType: String(record.eventType || ""),
+    domain: String(record.domain || "world"),
+    startMs: Number.isFinite(Number(record.startMs)) ? Number(record.startMs) : null,
+    endMs: Number.isFinite(Number(record.endMs)) ? Number(record.endMs) : null,
+    date: record.date,
+    startTime: String(record.startTime || ""),
+    endTime: String(record.endTime || ""),
+    goal: String(record.goal || ""),
+    description: String(record.description || ""),
+    doc: normalizeDocLink(record.doc)
+  };
+}
+
+function normalizeDocLink(doc) {
+  if (!doc || typeof doc !== "object") return null;
+  const url = String(doc.url || doc.link || "");
+  const title = String(doc.title || doc.text || url || "");
+  return url || title ? { title, url } : null;
+}
+
+function dedupeTimeRecords(records) {
+  const seen = new Set();
+  return records
+    .filter((record) => {
+      const key = record.id || `${record.date}:${record.startTime}:${record.title}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => {
+      if ((a.startMs || 0) !== (b.startMs || 0)) return (a.startMs || 0) - (b.startMs || 0);
+      return `${a.startTime} ${a.title}`.localeCompare(`${b.startTime} ${b.title}`, "zh-CN");
+    });
+}
+
+function latestCalendarSync(calendar) {
+  return Object.values(calendar.months || {})
+    .map((month) => month.syncedAt || "")
+    .sort()
+    .at(-1) || "";
+}
+
 async function init() {
   ensureDay(selectedDateKey);
   setDates();
@@ -285,6 +359,7 @@ function applyExternalState(incoming) {
   state = mergeStates(normalizeState(incoming), state);
   selectedDateKey = isDateKey(state.meta?.selectedDate) ? state.meta.selectedDate : selectedDateKey;
   ensureDay(selectedDateKey);
+  hydrateTimeRecordsFromState();
   writeLocalState();
   setDates();
   renderQuote();
@@ -342,6 +417,7 @@ function setSelectedDate(key, { loadRemote = true } = {}) {
   writeLocalState();
   scheduleCloudPush();
   syncState.timeRecords = [];
+  hydrateTimeRecordsFromState();
   syncState.automation = {};
   setDates();
   renderQuote();
@@ -393,6 +469,7 @@ async function restoreStateFromServer() {
     state = mergeStates(remote, state);
     selectedDateKey = isDateKey(state.meta?.selectedDate) ? state.meta.selectedDate : selectedDateKey;
     ensureDay(selectedDateKey);
+    hydrateTimeRecordsFromState();
     writeLocalState();
     setDates();
     renderAll();
@@ -429,12 +506,40 @@ function mergeStates(remote, local) {
     });
   });
 
+  merged.feishuCalendar = mergeFeishuCalendars(remote.feishuCalendar, localState.feishuCalendar);
   merged.meta = {
     ...(remote.meta || {}),
     selectedDate: localState.meta?.selectedDate || remote.meta?.selectedDate || selectedDateKey,
     schemaVersion: STATE_SCHEMA_VERSION,
     restoredAt: new Date().toISOString()
   };
+  return merged;
+}
+
+function mergeFeishuCalendars(remoteCalendar, localCalendar) {
+  const remote = normalizeFeishuCalendar(remoteCalendar);
+  const local = normalizeFeishuCalendar(localCalendar);
+  const merged = createEmptyFeishuCalendar();
+  const months = new Set([
+    ...Object.keys(remote.months || {}),
+    ...Object.keys(local.months || {})
+  ]);
+  months.forEach((month) => {
+    const remoteMonth = remote.months[month] || {};
+    const localMonth = local.months[month] || {};
+    const records = dedupeTimeRecords([
+      ...(localMonth.records || []),
+      ...(remoteMonth.records || [])
+    ]);
+    merged.months[month] = {
+      source: localMonth.source || remoteMonth.source || "feishu",
+      start: localMonth.start || remoteMonth.start || `${month}-01`,
+      end: localMonth.end || remoteMonth.end || "",
+      syncedAt: [localMonth.syncedAt || "", remoteMonth.syncedAt || ""].sort().at(-1) || "",
+      records
+    };
+  });
+  merged.updatedAt = latestCalendarSync(merged);
   return merged;
 }
 
@@ -521,8 +626,10 @@ async function loadRemoteData(refresh = false) {
   }
   if (!hasAnySuccess) {
     syncState.serverOnline = false;
+    hydrateTimeRecordsFromState();
     updateFeishuStatus(results.status?.error || new Error("local API unavailable"));
-    updateSyncIndicator("error", "本地模式");
+    renderCalendar();
+    updateSyncIndicator(syncState.timeRecords.length ? "online" : "error", syncState.timeRecords.length ? "云端缓存" : "本地模式");
     return;
   }
 
@@ -535,6 +642,9 @@ async function loadRemoteData(refresh = false) {
   if (results.timeData.ok) {
     syncState.timeRecords = results.timeData.value.records || [];
     syncState.lastSyncAt = results.timeData.value.syncedAt || syncState.lastSyncAt;
+    cacheFeishuTimeData(results.timeData.value);
+  } else {
+    hydrateTimeRecordsFromState();
   }
   if (results.automation.ok) {
     syncState.automation = Object.fromEntries((results.automation.value.items || []).map((item) => [item.id, item]));
@@ -561,6 +671,52 @@ function monthRangeQuery() {
   return `start=${formatDate(start)}&end=${formatDate(end)}`;
 }
 
+function selectedMonthKey() {
+  return selectedDateKey.slice(0, 7);
+}
+
+function getCachedMonthRecords(key = selectedDateKey) {
+  const month = String(key).slice(0, 7);
+  return state.feishuCalendar?.months?.[month]?.records || [];
+}
+
+function hydrateTimeRecordsFromState() {
+  syncState.timeRecords = getCachedMonthRecords(selectedDateKey);
+  const cachedMonth = state.feishuCalendar?.months?.[selectedMonthKey()];
+  if (cachedMonth?.syncedAt) {
+    syncState.lastSyncAt = cachedMonth.syncedAt;
+  }
+}
+
+function cacheFeishuTimeData(timeData) {
+  const records = Array.isArray(timeData?.records) ? timeData.records.map(normalizeTimeRecord).filter(Boolean) : [];
+  if (!records.length) return;
+  const nextCalendar = normalizeFeishuCalendar(state.feishuCalendar);
+  const byMonth = records.reduce((acc, record) => {
+    const month = record.date.slice(0, 7);
+    acc[month] = acc[month] || [];
+    acc[month].push(record);
+    return acc;
+  }, {});
+  Object.entries(byMonth).forEach(([month, monthRecords]) => {
+    const existing = nextCalendar.months[month] || {};
+    nextCalendar.months[month] = {
+      source: "feishu",
+      start: timeData.start || existing.start || `${month}-01`,
+      end: timeData.end || existing.end || "",
+      syncedAt: timeData.syncedAt || existing.syncedAt || new Date().toISOString(),
+      records: dedupeTimeRecords([
+        ...monthRecords,
+        ...(existing.records || [])
+      ])
+    };
+  });
+  nextCalendar.updatedAt = latestCalendarSync(nextCalendar) || new Date().toISOString();
+  state.feishuCalendar = nextCalendar;
+  writeLocalState();
+  scheduleCloudPush();
+}
+
 function updateSyncIndicator(mode, label) {
   const indicator = document.getElementById("syncIndicator");
   indicator.classList.remove("online", "warning", "error");
@@ -576,10 +732,14 @@ function updateFeishuStatus(error = null) {
   const relationBadge = document.getElementById("relationSyncBadge");
 
   if (error) {
-    title.textContent = "未连接本地同步服务";
-    meta.textContent = "本地服务开启后自动同步";
-    monthBadge.textContent = "飞书待同步";
-    monthBadge.classList.add("pending");
+    const cachedMonth = state.feishuCalendar?.months?.[selectedMonthKey()];
+    const count = syncState.timeRecords.length;
+    title.textContent = count ? "云端缓存已连接" : "未连接本地同步服务";
+    meta.textContent = count
+      ? `个人数据库 / 时间 · 云端缓存 ${count} 条 · ${cachedMonth?.syncedAt ? cachedMonth.syncedAt.slice(0, 16).replace("T", " ") : "等待本机刷新"}`
+      : "本地服务开启后自动同步";
+    monthBadge.textContent = count ? "飞书云端缓存" : "飞书待同步";
+    monthBadge.classList.toggle("pending", !count);
     routineBadge.textContent = "本地";
     relationBadge.textContent = "项目库 / 机构库 / Stars 待读取";
     relationBadge.classList.add("pending");
@@ -807,6 +967,10 @@ function renderMonthCalendar() {
   const offset = (first.getDay() || 7) - 1;
   const start = new Date(first);
   start.setDate(first.getDate() - offset);
+  const monthRecords = dedupeTimeRecords([
+    ...(syncState.timeRecords || []),
+    ...getCachedMonthRecords(selectedDateKey)
+  ]);
 
   const html = Array.from({ length: 42 }, (_, index) => {
     const date = new Date(start);
@@ -816,7 +980,7 @@ function renderMonthCalendar() {
     const day = state.days[key];
     const doneCount = day ? route.filter((node) => day.route[node.id]?.done).length : 0;
     const hasStatus = day ? route.some((node) => day.route[node.id]?.status) : false;
-    const feishuItems = syncState.timeRecords.filter((item) => item.date === key);
+    const feishuItems = monthRecords.filter((item) => item.date === key);
     return `
       <div class="month-day ${muted ? "muted" : ""} ${key === selectedDateKey ? "selected" : ""}" data-calendar-date="${key}" tabindex="0">
         <strong>${date.getDate()}</strong>

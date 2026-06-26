@@ -71,15 +71,19 @@
       <form class="cloud-auth-card" id="cloudAuthForm">
         <p class="eyebrow">Private cloud access</p>
         <h2>登录 ${escapeHtml(config.appName)}</h2>
-        <p class="cloud-auth-copy">输入允许访问的邮箱。系统会发送登录链接，浏览器不保存 Feishu 密钥或 service role key。</p>
+        <p class="cloud-auth-copy">输入允许访问的邮箱。密码登录不依赖邮件发送；邮件链接作为备用方式。</p>
         <label class="field-label" for="cloudEmail">Email</label>
         <input type="email" id="cloudEmail" autocomplete="email" required placeholder="your@email.com" />
-        <button class="primary-button" type="submit">发送登录链接</button>
+        <label class="field-label" for="cloudPassword">Password</label>
+        <input type="password" id="cloudPassword" autocomplete="current-password" placeholder="Supabase login password" />
+        <button class="primary-button" type="submit">密码登录</button>
+        <button class="cloud-link-button" id="sendMagicLinkBtn" type="button">发送登录链接</button>
         <p class="cloud-auth-message" id="cloudAuthMessage"></p>
       </form>
     `;
     document.body.appendChild(overlayNode);
-    overlayNode.querySelector("#cloudAuthForm").addEventListener("submit", sendLoginLink);
+    overlayNode.querySelector("#cloudAuthForm").addEventListener("submit", signInWithPassword);
+    overlayNode.querySelector("#sendMagicLinkBtn").addEventListener("click", sendLoginLink);
     return overlayNode;
   }
 
@@ -96,29 +100,58 @@
     }
   }
 
-  async function sendLoginLink(event) {
-    event.preventDefault();
+  function readAuthForm() {
     const emailInput = overlayNode.querySelector("#cloudEmail");
+    const passwordInput = overlayNode.querySelector("#cloudPassword");
     const messageNode = overlayNode.querySelector("#cloudAuthMessage");
     const email = emailInput.value.trim();
     if (config.allowedEmail && email.toLowerCase() !== config.allowedEmail.toLowerCase()) {
       messageNode.textContent = "这个邮箱不在允许访问列表。";
+      return null;
+    }
+    return { email, password: passwordInput.value, messageNode };
+  }
+
+  async function signInWithPassword(event) {
+    event.preventDefault();
+    const form = readAuthForm();
+    if (!form) return;
+    if (!form.password) {
+      form.messageNode.textContent = "请输入密码。";
       return;
     }
+    setStatus("warning", "登录中");
+    const { error } = await client.auth.signInWithPassword({
+      email: form.email,
+      password: form.password
+    });
+    if (error) {
+      form.messageNode.textContent = `密码登录失败：${error.message}`;
+      setStatus("error", "登录失败");
+      return;
+    }
+    form.messageNode.textContent = "登录成功，正在同步云端状态。";
+    setStatus("online", "云端已登录");
+  }
+
+  async function sendLoginLink(event) {
+    event.preventDefault();
+    const form = readAuthForm();
+    if (!form) return;
     setStatus("warning", "发送登录");
     const { error } = await client.auth.signInWithOtp({
-      email,
+      email: form.email,
       options: {
         emailRedirectTo: window.location.origin + window.location.pathname,
         shouldCreateUser: false
       }
     });
     if (error) {
-      messageNode.textContent = `登录链接发送失败：${error.message}`;
+      form.messageNode.textContent = `登录链接发送失败：${error.message}`;
       setStatus("error", "登录失败");
       return;
     }
-    messageNode.textContent = "登录链接已发送，请在邮箱中确认。";
+    form.messageNode.textContent = "登录链接已发送，请在邮箱中确认。";
     setStatus("warning", "查收邮件");
   }
 

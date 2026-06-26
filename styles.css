@@ -378,6 +378,18 @@ input[type="date"]:focus {
   margin-top: 12px;
 }
 
+.cloud-link-button {
+  width: 100%;
+  min-height: 40px;
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fffaf0;
+  color: #2d2b27;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .sync-badge.pending {
   color: #8d641f;
   border-color: #e1cb9c;

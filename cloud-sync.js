@@ -1,7 +1,7 @@
 (function () {
   const DEVICE_KEY = "dominique-os-device-id";
+  const SESSION_KEY = "dominique-os-supabase-session-v1";
   const PUSH_DELAY_MS = 1200;
-  const SUPABASE_MODULE_URL = "https://esm.sh/@supabase/supabase-js@2";
 
   let config = null;
   let client = null;
@@ -159,8 +159,273 @@
     if (window.supabase?.createClient) {
       return window.supabase.createClient;
     }
-    const module = await import(SUPABASE_MODULE_URL);
-    return module.createClient;
+    return createFetchSupabaseClient;
+  }
+
+  function createFetchSupabaseClient(supabaseUrl, anonKey) {
+    const baseUrl = supabaseUrl.replace(/\/$/, "");
+    const listeners = new Set();
+
+    function notify(event, nextSession) {
+      listeners.forEach((listener) => {
+        listener(event, nextSession);
+      });
+    }
+
+    function projectRef() {
+      try {
+        return new URL(baseUrl).hostname.split(".")[0];
+      } catch {
+        return "";
+      }
+    }
+
+    function normalizeSession(payload) {
+      if (!payload?.access_token) return null;
+      return {
+        access_token: payload.access_token,
+        refresh_token: payload.refresh_token || "",
+        token_type: payload.token_type || "bearer",
+        expires_in: payload.expires_in || 3600,
+        expires_at: payload.expires_at || Math.floor(Date.now() / 1000) + Number(payload.expires_in || 3600),
+        user: payload.user || null
+      };
+    }
+
+    function saveSession(nextSession) {
+      if (!nextSession) {
+        localStorage.removeItem(SESSION_KEY);
+        return;
+      }
+      localStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
+    }
+
+    function readStoredSession() {
+      const keys = [
+        SESSION_KEY,
+        `sb-${projectRef()}-auth-token`
+      ].filter(Boolean);
+      for (const key of keys) {
+        try {
+          const value = JSON.parse(localStorage.getItem(key) || "null");
+          const nextSession = normalizeSession(value?.currentSession || value);
+          if (nextSession) return nextSession;
+        } catch {
+          // Ignore malformed browser auth cache entries.
+        }
+      }
+      return null;
+    }
+
+    function readUrlSession() {
+      const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+      if (!hash) return null;
+      const params = new URLSearchParams(hash);
+      const accessToken = params.get("access_token");
+      if (!accessToken) return null;
+      const nextSession = normalizeSession({
+        access_token: accessToken,
+        refresh_token: params.get("refresh_token") || "",
+        token_type: params.get("token_type") || "bearer",
+        expires_in: Number(params.get("expires_in") || 3600),
+        expires_at: Math.floor(Date.now() / 1000) + Number(params.get("expires_in") || 3600),
+        user: null
+      });
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      return nextSession;
+    }
+
+    async function requestJson(path, { method = "GET", body = null, token = null, prefer = "" } = {}) {
+      const headers = {
+        apikey: anonKey,
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      if (prefer) headers.Prefer = prefer;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 15000);
+      try {
+        const response = await fetch(`${baseUrl}${path}`, {
+          method,
+          headers,
+          body: body == null ? null : JSON.stringify(body),
+          signal: controller.signal
+        });
+        const text = await response.text();
+        const data = text ? JSON.parse(text) : null;
+        if (!response.ok) {
+          throw new Error(data?.msg || data?.message || data?.error_description || data?.error || `Supabase ${response.status}`);
+        }
+        return data;
+      } catch (error) {
+        if (error.name === "AbortError") {
+          throw new Error("Supabase request timed out");
+        }
+        throw error;
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
+    async function refreshSession(current) {
+      if (!current?.refresh_token) return null;
+      const refreshed = await requestJson("/auth/v1/token?grant_type=refresh_token", {
+        method: "POST",
+        body: { refresh_token: current.refresh_token }
+      });
+      const nextSession = normalizeSession(refreshed);
+      saveSession(nextSession);
+      return nextSession;
+    }
+
+    async function currentSession() {
+      let nextSession = readUrlSession() || readStoredSession();
+      if (!nextSession) return null;
+      if (nextSession.expires_at && nextSession.expires_at < Math.floor(Date.now() / 1000) + 60) {
+        nextSession = await refreshSession(nextSession);
+      }
+      if (!nextSession?.user && nextSession?.access_token) {
+        const userResult = await requestJson("/auth/v1/user", {
+          token: nextSession.access_token
+        });
+        nextSession.user = userResult;
+        saveSession(nextSession);
+      }
+      return nextSession;
+    }
+
+    function from(table) {
+      const builder = {
+        columns: "*",
+        filters: [],
+        select(columns) {
+          this.columns = columns || "*";
+          return this;
+        },
+        eq(field, value) {
+          this.filters.push([field, value]);
+          return this;
+        },
+        async maybeSingle() {
+          try {
+            const nextSession = await currentSession();
+            if (!nextSession) throw new Error("Not signed in");
+            const params = new URLSearchParams({ select: this.columns });
+            this.filters.forEach(([field, value]) => {
+              params.set(field, `eq.${value}`);
+            });
+            const rows = await requestJson(`/rest/v1/${table}?${params.toString()}`, {
+              token: nextSession.access_token
+            });
+            return { data: rows?.[0] || null, error: null };
+          } catch (error) {
+            return { data: null, error };
+          }
+        },
+        async upsert(payload, options = {}) {
+          try {
+            const nextSession = await currentSession();
+            if (!nextSession) throw new Error("Not signed in");
+            const conflict = options.onConflict ? `?on_conflict=${encodeURIComponent(options.onConflict)}` : "";
+            await requestJson(`/rest/v1/${table}${conflict}`, {
+              method: "POST",
+              body: payload,
+              token: nextSession.access_token,
+              prefer: "resolution=merge-duplicates,return=minimal"
+            });
+            return { error: null };
+          } catch (error) {
+            return { error };
+          }
+        },
+        async insert(payload) {
+          try {
+            const nextSession = await currentSession();
+            if (!nextSession) throw new Error("Not signed in");
+            await requestJson(`/rest/v1/${table}`, {
+              method: "POST",
+              body: payload,
+              token: nextSession.access_token,
+              prefer: "return=minimal"
+            });
+            return { error: null };
+          } catch (error) {
+            return { error };
+          }
+        }
+      };
+      return builder;
+    }
+
+    return {
+      auth: {
+        async getSession() {
+          const nextSession = await currentSession();
+          return { data: { session: nextSession }, error: null };
+        },
+        async signInWithPassword({ email, password }) {
+          try {
+            const result = await requestJson("/auth/v1/token?grant_type=password", {
+              method: "POST",
+              body: { email, password }
+            });
+            const nextSession = normalizeSession(result);
+            saveSession(nextSession);
+            notify("SIGNED_IN", nextSession);
+            return { data: { session: nextSession }, error: null };
+          } catch (error) {
+            return { data: { session: null }, error };
+          }
+        },
+        async signInWithOtp({ email, options = {} }) {
+          try {
+            await requestJson("/auth/v1/otp", {
+              method: "POST",
+              token: anonKey,
+              body: {
+                email,
+                create_user: false,
+                options: {
+                  email_redirect_to: options.emailRedirectTo || window.location.href,
+                  should_create_user: false
+                }
+              }
+            });
+            return { error: null };
+          } catch (error) {
+            return { error };
+          }
+        },
+        async signOut() {
+          saveSession(null);
+          notify("SIGNED_OUT", null);
+          return { error: null };
+        },
+        onAuthStateChange(listener) {
+          listeners.add(listener);
+          return {
+            data: {
+              subscription: {
+                unsubscribe: () => listeners.delete(listener)
+              }
+            }
+          };
+        }
+      },
+      from,
+      channel() {
+        return {
+          on() {
+            return this;
+          },
+          subscribe() {
+            return this;
+          }
+        };
+      },
+      removeChannel() {}
+    };
   }
 
   async function ensureSession() {

@@ -753,7 +753,8 @@ function updateFeishuStatus(error = null) {
       : "本地服务开启后自动同步";
     monthBadge.textContent = count ? "飞书云端缓存" : "飞书待同步";
     monthBadge.classList.toggle("pending", !count);
-    routineBadge.textContent = "本地";
+    const hasRoutineCache = Object.values(selectedDay().routines || {}).some(hasRoutineContent);
+    routineBadge.textContent = hasRoutineCache ? "Codex 云端缓存" : "本地";
     relationBadge.textContent = "项目库 / 机构库 / Stars 待读取";
     relationBadge.classList.add("pending");
     return;
@@ -1092,7 +1093,7 @@ function renderRoutines() {
     const link = entry.link || auto.link || auto.path || "";
     const note = entry.note || auto.note || "";
     const openHref = hrefForLink(link);
-    const evidenceLabel = auto.path ? shortPath(auto.path) : (openHref ? "当日证据" : "等待证据");
+    const evidenceLabel = auto.path ? shortPath(auto.path) : (openHref ? "当日证据" : (link ? shortPath(link) : "等待证据"));
     return `
       <article class="routine-card" style="--routine-color: ${routine.color};">
         <div class="routine-top">
@@ -1112,7 +1113,7 @@ function renderRoutines() {
               <i data-lucide="external-link"></i>
               <span>打开</span>
             </a>
-          ` : `<span class="routine-open disabled">未找到链接</span>`}
+          ` : `<span class="routine-open disabled">${link ? "本机报告" : "未找到链接"}</span>`}
           <span>${escapeHtml(evidenceLabel)}</span>
         </div>
         <input type="text" data-routine-note="${routine.id}" value="${escapeAttr(note)}" placeholder="当日一句话" />
@@ -1146,6 +1147,7 @@ function hrefForLink(value) {
   const link = String(value || "").trim();
   if (!link) return "";
   if (/^https?:\/\//i.test(link)) return link;
+  if (location.hostname.endsWith("github.io")) return "";
   if (link.startsWith("/api/")) return `${API_BASE}${link}`;
   if (link.startsWith("/Users/") || link.startsWith("~/")) {
     return `${API_BASE}/api/local-file?path=${encodeURIComponent(link)}`;

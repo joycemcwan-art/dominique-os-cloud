@@ -283,14 +283,24 @@
       let nextSession = readUrlSession() || readStoredSession();
       if (!nextSession) return null;
       if (nextSession.expires_at && nextSession.expires_at < Math.floor(Date.now() / 1000) + 60) {
-        nextSession = await refreshSession(nextSession);
+        try {
+          nextSession = await refreshSession(nextSession);
+        } catch {
+          saveSession(null);
+          return null;
+        }
       }
       if (!nextSession?.user && nextSession?.access_token) {
-        const userResult = await requestJson("/auth/v1/user", {
-          token: nextSession.access_token
-        });
-        nextSession.user = userResult;
-        saveSession(nextSession);
+        try {
+          const userResult = await requestJson("/auth/v1/user", {
+            token: nextSession.access_token
+          });
+          nextSession.user = userResult;
+          saveSession(nextSession);
+        } catch {
+          saveSession(null);
+          return null;
+        }
       }
       return nextSession;
     }
@@ -361,8 +371,13 @@
     return {
       auth: {
         async getSession() {
-          const nextSession = await currentSession();
-          return { data: { session: nextSession }, error: null };
+          try {
+            const nextSession = await currentSession();
+            return { data: { session: nextSession }, error: null };
+          } catch (error) {
+            saveSession(null);
+            return { data: { session: null }, error };
+          }
         },
         async signInWithPassword({ email, password }) {
           try {

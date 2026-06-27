@@ -574,7 +574,7 @@ function mergeDay(remoteDay, localDay) {
   routines.forEach((routine) => {
     const remoteEntry = remoteDay.routines?.[routine.id] || { done: false, link: "", note: "" };
     const localEntry = localDay.routines?.[routine.id] || { done: false, link: "", note: "" };
-    merged.routines[routine.id] = hasRoutineContent(localEntry) ? localEntry : remoteEntry;
+    merged.routines[routine.id] = mergeRoutineEntry(remoteEntry, localEntry);
   });
 
   const seenProjects = new Set();
@@ -586,6 +586,41 @@ function mergeDay(remoteDay, localDay) {
   });
   merged.weeklyReport = localDay.weeklyReport || remoteDay.weeklyReport || "";
   return merged;
+}
+
+function mergeRoutineEntry(remoteEntry, localEntry) {
+  const remote = remoteEntry || { done: false, link: "", note: "" };
+  const local = localEntry || { done: false, link: "", note: "" };
+  const remoteLink = String(remote.link || "");
+  const localLink = String(local.link || "");
+  const remoteNote = String(remote.note || "");
+  const localNote = String(local.note || "");
+  return {
+    done: Boolean(remote.done || local.done),
+    link: shouldUseRemoteRoutineLink(remoteLink, localLink) ? remoteLink : (localLink || remoteLink),
+    note: shouldUseRemoteRoutineNote(remoteNote, localNote) ? remoteNote : (localNote || remoteNote)
+  };
+}
+
+function shouldUseRemoteRoutineLink(remoteLink, localLink) {
+  return isHttpLink(remoteLink) && (!isHttpLink(localLink) || isLocalOnlyLink(localLink));
+}
+
+function shouldUseRemoteRoutineNote(remoteNote, localNote) {
+  return Boolean(remoteNote) && (!localNote || looksLikeReportFilename(localNote));
+}
+
+function isHttpLink(value) {
+  return /^https?:\/\//i.test(String(value || "").trim());
+}
+
+function isLocalOnlyLink(value) {
+  const text = String(value || "").trim();
+  return text.startsWith("/api/local-file") || text.startsWith("/Users/") || text.startsWith("~/");
+}
+
+function looksLikeReportFilename(value) {
+  return /\.(md|html?|json)$/i.test(String(value || "").trim());
 }
 
 function hasRouteContent(entry) {
